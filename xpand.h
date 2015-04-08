@@ -17,8 +17,9 @@
 #define XPAND_H_
 
 #include <X11/Xlib.h>
-#include <X11/extensions/composite.h>
-#include <X11/extensions/render.h>
+#include <X11/extensions/Xcomposite.h>
+#include <X11/extensions/Xdamage.h>
+#include <X11/extensions/Xrender.h>
 
 int XpandWindow(Window source_window, int scale);
 
