@@ -14,6 +14,9 @@
 //  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdio.h>
+#include <cairo/cairo.h>
+#include <cairo/cairo-xlib.h>
+#include <X11/extensions/Xdamage.h>
 #include "xpand.h"
 
 int XpandWindow(Window source_window, int scale) {
@@ -23,22 +26,10 @@ int XpandWindow(Window source_window, int scale) {
         return -1;
     }
 
-    int comp_event_base, comp_error_base;
-    // require xcomposite
-    if (!XCompositeQueryExtension(display, &comp_event_base, &comp_error_base)) {
-        fprintf(stderr, "xpand: xcomposite is required\n");
-        return -1;
-    }
     int damage_event_base, damage_error_base;
     // require xdamage
     if (!XDamageQueryExtension(display, &damage_event_base, &damage_error_base)) {
         fprintf(stderr, "xpand: xdamage is required\n");
-        return -1;
-    }
-    int render_event_base, render_error_base;
-    // require xrender
-    if (!XRenderQueryExtension(display, &render_event_base, &render_error_base)) {
-        fprintf(stderr, "xpand: xrender is required\n");
         return -1;
     }
 
@@ -47,7 +38,6 @@ int XpandWindow(Window source_window, int scale) {
         fprintf(stderr, "xpand: failed to get attrs for wid %d\n", source_window);
     }
 
-    XTransform scale_transform = { .matrix = {{ scale, 0, 0 }, { 0, scale, 0 }, { 0, 0, 1 }}};
     int scaled_width = attrs.width * scale;
     int scaled_height = attrs.height * scale;
 
@@ -62,18 +52,23 @@ int XpandWindow(Window source_window, int scale) {
 
     printf("xpand: event mask 0x%x\n", xpand_attrs.event_mask);
     
-    Pixmap source_pixmap = XCompositeNameWindowPixmap(display, source_window);
     Damage damage = XDamageCreate(display, source_window, XDamageReportNonEmpty);
-    GC gc = XCreateGC(display, xpand_window, 0, NULL);
+
+    cairo_surface_t *source_surface = cairo_xlib_surface_create(display, source_window, DefaultVisual(display, 0), attrs.width, attrs.height);
+    cairo_surface_t *xpand_surface = cairo_xlib_surface_create(display, xpand_window, DefaultVisual(display, 0), scaled_width, scaled_height);
+    cairo_t *cr_xpand = cairo_create(xpand_surface);
+
+    // set up scaled bounds
+    cairo_scale(cr_xpand, scale, scale);
+    cairo_set_source_surface(cr_xpand, source_surface, 0, 0);
 
     XEvent e;
     while (1) {
         // TODO: intercept resize events for window and rescale appropriately
-        // TODO: use damage events to intercept window changes? we have to do something
         XNextEvent(display, &e);
         if (e.type == damage_event_base) {
             // Handle damage
-            XCopyArea(display, source_window, xpand_window, gc, 0, 0, scaled_width, scaled_height, 0, 0);
+            cairo_paint(cr_xpand);
             XDamageSubtract(display, damage, None, None);
         } else if (((XAnyEvent*)&e)->window == xpand_window) {
             // Perform transforms from scaled to unscaled coordinates
@@ -93,11 +88,14 @@ int XpandWindow(Window source_window, int scale) {
                     ((XMotionEvent*)&e)->y /= scale;
                     break;
             }
-            printf("xpand: event received of type %d\n", e.type);
             // Forward all events to target window
             XSendEvent(display, source_window, False, 0, &e);
         }
     }
+    cairo_surface_destroy(xpand_surface);
+    cairo_surface_destroy(source_surface);
+    cairo_destroy(cr_xpand);
+
     XDamageDestroy(display, damage);
     XUnmapWindow(display, xpand_window);
     //XMapWindow(display, source_window);
