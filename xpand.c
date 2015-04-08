@@ -16,8 +16,8 @@
 #include <stdio.h>
 #include <cairo/cairo.h>
 #include <cairo/cairo-xlib.h>
+#include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
-#include <X11/extensions/XTest.h>
 #include "xpand.h"
 
 int XpandWindow(Window source_window, int scale) {
@@ -34,6 +34,13 @@ int XpandWindow(Window source_window, int scale) {
         return -1;
     }
 
+    int comp_event_base, comp_error_base;
+    // require xcomposite
+    if (!XCompositeQueryExtension(display, &comp_event_base, &comp_error_base)) {
+        fprintf(stderr, "xpand: xcomposite is required\n");
+        return -1;
+    }
+
     XWindowAttributes attrs;
     if(XGetWindowAttributes(display, source_window, &attrs) < 0) {
         fprintf(stderr, "xpand: failed to get attrs for wid %d\n", source_window);
@@ -42,6 +49,7 @@ int XpandWindow(Window source_window, int scale) {
     int scaled_width = attrs.width * scale;
     int scaled_height = attrs.height * scale;
 
+    // Create xpand scaled window
     XSetWindowAttributes xpand_attrs = {
         .event_mask = attrs.all_event_masks,
         .do_not_propagate_mask = attrs.do_not_propagate_mask
@@ -50,17 +58,17 @@ int XpandWindow(Window source_window, int scale) {
         attrs.y, scaled_width, scaled_height, attrs.border_width,
         CopyFromParent, InputOutput, CopyFromParent,
         CWEventMask | CWDontPropagate, &xpand_attrs);
-
     XMapWindow(display, xpand_window);
 
-    // setup backing store and unmap source
 
-    //XUnmapWindow(display, source_window);
+    // Set up reparented and redirected child
+    // FIXME: doesn't work with compton, but seems fine in gnome-shell. why?
+    XCompositeRedirectWindow(display, source_window, CompositeRedirectManual);
+    Pixmap source_pixmap = XCompositeNameWindowPixmap(display, source_window);
+    Damage damage = XDamageCreate(display, source_pixmap, XDamageReportNonEmpty);
 
-    printf("xpand: event mask 0x%x\n", xpand_attrs.event_mask);
-    
     cairo_surface_t *source_surface = cairo_xlib_surface_create(display,
-        source_window, DefaultVisual(display, 0), attrs.width, attrs.height);
+        source_pixmap, DefaultVisual(display, 0), attrs.width, attrs.height);
     cairo_surface_t *xpand_surface = cairo_xlib_surface_create(display,
         xpand_window, DefaultVisual(display, 0), scaled_width, scaled_height);
     cairo_t *cr_xpand = cairo_create(xpand_surface);
@@ -69,7 +77,6 @@ int XpandWindow(Window source_window, int scale) {
     cairo_scale(cr_xpand, scale, scale);
     cairo_set_source_surface(cr_xpand, source_surface, 0, 0);
 
-    Damage damage = XDamageCreate(display, source_window, XDamageReportNonEmpty);
     XEvent e;
     while (1) {
         // TODO: intercept resize events for window and rescale appropriately
@@ -80,7 +87,8 @@ int XpandWindow(Window source_window, int scale) {
             XDamageSubtract(display, damage, None, None);
         } else if (e.xany.window == xpand_window) {
             // Perform transforms from scaled to unscaled coordinates
-            // FIXME: focus events are broken as hell
+            // FIXME: focus events are rather broken
+            //        also, some clients reject XSendEvent events
             switch (e.type) {
                 case ButtonPress:
                 case ButtonRelease:
@@ -110,7 +118,6 @@ int XpandWindow(Window source_window, int scale) {
                     cairo_paint(cr_xpand);
                     break;
             }
-            printf("xpand: received event %d\n", e.type);
             // Forward all events to target window
             e.xany.window = source_window;
             XSendEvent(display, source_window, True, xpand_attrs.event_mask, &e);
@@ -122,7 +129,6 @@ int XpandWindow(Window source_window, int scale) {
 
     XDamageDestroy(display, damage);
     XUnmapWindow(display, xpand_window);
-    //XMapWindow(display, source_window);
     XDestroyWindow(display, xpand_window);
     XCloseDisplay(display);
 }

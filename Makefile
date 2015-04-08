@@ -1,6 +1,6 @@
 CC=gcc
 OPTS=-g
-LIBS=-lX11 -lXdamage -lcairo
+LIBS=-lX11 -lXcomposite -lXdamage -lcairo
 
 all: xpandwindow
 xpandwindow: xpand.c xpandwindow.c
