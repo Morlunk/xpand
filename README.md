@@ -22,3 +22,6 @@ TODO
 - fix rough getopt use in xpandwindow shim
 - use procedures defined in xpand.h to implement LD_PRELOAD hack to expand
   created windows for a program
+- find some way to work around windows that listen directly to /dev/input/*
+    - simulate evdev events with X using intercepted procedure call to read?
+    - that sounds terrible

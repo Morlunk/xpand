@@ -60,10 +60,8 @@ int XpandWindow(Window source_window, int scale) {
         CWEventMask | CWDontPropagate, &xpand_attrs);
     XMapWindow(display, xpand_window);
 
-
-    // Set up reparented and redirected child
-    // FIXME: doesn't work with compton, but seems fine in gnome-shell. why?
-    XCompositeRedirectWindow(display, source_window, CompositeRedirectManual);
+    // Redirect target offscreen
+    XCompositeRedirectWindow(display, source_window, CompositeRedirectAutomatic);
     Pixmap source_pixmap = XCompositeNameWindowPixmap(display, source_window);
     Damage damage = XDamageCreate(display, source_pixmap, XDamageReportNonEmpty);
 
@@ -117,6 +115,16 @@ int XpandWindow(Window source_window, int scale) {
                     // draw initial contents
                     cairo_paint(cr_xpand);
                     break;
+                case FocusIn:
+                case FocusOut:
+                    // forward focus unchanged
+                    break;
+                case ConfigureNotify:
+                case ResizeRequest:
+                case PropertyNotify:
+                case MapNotify:
+                    // ignore resize request: FIXME
+                    continue;
             }
             // Forward all events to target window
             e.xany.window = source_window;
