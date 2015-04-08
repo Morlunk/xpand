@@ -17,6 +17,7 @@
 #include <cairo/cairo.h>
 #include <cairo/cairo-xlib.h>
 #include <X11/extensions/Xdamage.h>
+#include <X11/extensions/XTest.h>
 #include "xpand.h"
 
 int XpandWindow(Window source_window, int scale) {
@@ -41,27 +42,34 @@ int XpandWindow(Window source_window, int scale) {
     int scaled_width = attrs.width * scale;
     int scaled_height = attrs.height * scale;
 
-    XSetWindowAttributes xpand_attrs = { .event_mask = attrs.all_event_masks };
+    XSetWindowAttributes xpand_attrs = {
+        .event_mask = attrs.all_event_masks,
+        .do_not_propagate_mask = attrs.do_not_propagate_mask
+    };
     Window xpand_window = XCreateWindow(display, attrs.root, attrs.x,
         attrs.y, scaled_width, scaled_height, attrs.border_width,
-        CopyFromParent, InputOutput, CopyFromParent, CWEventMask,
-        &xpand_attrs);
+        CopyFromParent, InputOutput, CopyFromParent,
+        CWEventMask | CWDontPropagate, &xpand_attrs);
+
+    XMapWindow(display, xpand_window);
+
+    // setup backing store and unmap source
 
     //XUnmapWindow(display, source_window);
-    XMapWindow(display, xpand_window);
 
     printf("xpand: event mask 0x%x\n", xpand_attrs.event_mask);
     
-    Damage damage = XDamageCreate(display, source_window, XDamageReportNonEmpty);
-
-    cairo_surface_t *source_surface = cairo_xlib_surface_create(display, source_window, DefaultVisual(display, 0), attrs.width, attrs.height);
-    cairo_surface_t *xpand_surface = cairo_xlib_surface_create(display, xpand_window, DefaultVisual(display, 0), scaled_width, scaled_height);
+    cairo_surface_t *source_surface = cairo_xlib_surface_create(display,
+        source_window, DefaultVisual(display, 0), attrs.width, attrs.height);
+    cairo_surface_t *xpand_surface = cairo_xlib_surface_create(display,
+        xpand_window, DefaultVisual(display, 0), scaled_width, scaled_height);
     cairo_t *cr_xpand = cairo_create(xpand_surface);
 
     // set up scaled bounds
     cairo_scale(cr_xpand, scale, scale);
     cairo_set_source_surface(cr_xpand, source_surface, 0, 0);
 
+    Damage damage = XDamageCreate(display, source_window, XDamageReportNonEmpty);
     XEvent e;
     while (1) {
         // TODO: intercept resize events for window and rescale appropriately
@@ -70,26 +78,42 @@ int XpandWindow(Window source_window, int scale) {
             // Handle damage
             cairo_paint(cr_xpand);
             XDamageSubtract(display, damage, None, None);
-        } else if (((XAnyEvent*)&e)->window == xpand_window) {
+        } else if (e.xany.window == xpand_window) {
             // Perform transforms from scaled to unscaled coordinates
+            // FIXME: focus events are broken as hell
             switch (e.type) {
                 case ButtonPress:
                 case ButtonRelease:
-                    ((XButtonEvent*)&e)->x /= scale;
-                    ((XButtonEvent*)&e)->y /= scale;
+                    e.xbutton.x /= scale;
+                    e.xbutton.y /= scale;
                     break;
                 case KeyPress:
                 case KeyRelease:
-                    ((XKeyEvent*)&e)->x /= scale;
-                    ((XKeyEvent*)&e)->y /= scale;
+                    e.xkey.x /= scale;
+                    e.xkey.y /= scale;
                     break;
                 case MotionNotify:
-                    ((XMotionEvent*)&e)->x /= scale;
-                    ((XMotionEvent*)&e)->y /= scale;
+                    e.xmotion.x /= scale;
+                    e.xmotion.y /= scale;
+                    break;
+                case EnterNotify:
+                case LeaveNotify:
+                    e.xcrossing.x /= scale;
+                    e.xcrossing.y /= scale;
+                    break;
+                case Expose:
+                    e.xexpose.x /= scale;
+                    e.xexpose.y /= scale;
+                    e.xexpose.width /= scale;
+                    e.xexpose.height /= scale;
+                    // draw initial contents
+                    cairo_paint(cr_xpand);
                     break;
             }
+            printf("xpand: received event %d\n", e.type);
             // Forward all events to target window
-            XSendEvent(display, source_window, False, 0, &e);
+            e.xany.window = source_window;
+            XSendEvent(display, source_window, True, xpand_attrs.event_mask, &e);
         }
     }
     cairo_surface_destroy(xpand_surface);
