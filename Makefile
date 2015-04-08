@@ -1,8 +1,9 @@
 CC=gcc
 OPTS=-g
+LIBS=-lX11 -lXcomposite -lXrender
 
-all: xpand
-xpand: xpand.c
-	$(CC) xpand.c $(OPTS) -o xpand
+all: xpandwindow
+xpandwindow: xpand.c xpandwindow.c
+	$(CC) $(LIBS) xpand.c xpandwindow.c $(OPTS) -o xpandwindow
 clean:
-	rm *.o xpand
+	rm *.o xpandwindow
